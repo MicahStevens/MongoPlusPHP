@@ -1,9 +1,5 @@
 <?php
 /**
- * Contains the single "unit" data abstraction classes, intended to be used in an OOP framework
- *
- */
-/**
  * Provides tighter integration for lists of mongocollectionplus objects. This is returned by mongocollectionplus instead of a standard cursor if you call findObjects
  * @author Micah Stevens <micahstev@gmail.com>
  * @version 1.0 - initial release
@@ -13,14 +9,14 @@
 
 class MongoCursorPlus extends MongoCursor
 {
-	var $site; // site object
+	var $db; // db object
 	var $collectionType;
 	
-	function __construct($site, $className, $collectionName, $query)
+	function __construct($db, $className, $collectionName, $query)
 	{
-		$this->site = $site;
+		$this->db = $db;
 		$this->collectionType = $className;
-		parent::__construct( $this->site->db, $collectionName, $query, array());
+		parent::__construct( $this->db, $collectionName, $query, array());
 	}
 	
 	/**
@@ -39,11 +35,11 @@ class MongoCursorPlus extends MongoCursor
 		// if it's a temp collection, we need to pass the generated name over. 
 		if ($this->collectionType == 'MongoTempCollection')
 		{
-			$object = new $this->collectionType($this->site, $collectionName);
+			$object = new $this->collectionType($this->db, $collectionName);
 		}
 		else
 		{
-			$object = new $this->collectionType($this->site);
+			$object = new $this->collectionType($this->db);
 		}
 		$object->loadRow($current);
 		return $object;

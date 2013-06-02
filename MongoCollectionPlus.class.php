@@ -7,7 +7,7 @@
  * Idea Based on some code for MySQL by Eddie Daniels  <stratease@gmail.com>
  * @author Micah Stevens <micahstev@gmail.com>
  * @version 2.0 - extends mongo collection
- * @version 1.0 - didn't extend mongoCollection - just was a factory for it, didn't work well. 
+ * @version 1.0 - didn't extend mongoCollection - just was a factory for it, didn't work well.
  * @todo Add foreign key mapping for app joins-maybe mongodbref?
  * @todo add some helper methods for caching?
  *
@@ -138,42 +138,36 @@ abstract class MongoCollectionPlus extends MongoCollection
 	 */
 	protected $documentValues = array();
 	/**
-	 * Site class
+	 * MongoDB class
 	 */
-	protected $site;
+	protected $db;
 	/**
 	 * True if this should be a gridFS collection
+	 * @todo
 	 */
 	protected $gridFS = false;
+
 	/**
 	 * binary/text data for gridFS file. Required. set to '' if you want an empty file.
 	 */
 	public $fileData = null;
+
 	/**
 	 * Child class name
 	 */
 	public $__CLASS__;
-	function __construct($site)
+
+	function __construct($db)
 	{
 		$this->__CLASS__ = get_class($this);
-		$this->site = $site;
-		$dbServer = $site->db;
-		if ($this->dbName == null) {
-			// user didn't set dbName, so pull default from config
-			$this->dbName = $site->config('db.database');
-		}
-
-		if ($this->dbName === null) {
-			trigger_error(get_class($this) . "::__construct error - no DB specified", E_USER_ERROR);
-		}
 		// do startup activities
 		foreach ($this->onStart as $func) {
 			$this->$func();
 		}
 		// Initialise Mongo
-		$this->db = $dbServer->selectDB($this->dbName);
+		$this->db = $db;
+		$this->dbName = $db->__toString();
 		parent::__construct($this->db, $this->collectionName);
-
 	}
 	/**
 	 * onLoad event.
@@ -207,7 +201,7 @@ abstract class MongoCollectionPlus extends MongoCollection
 	{
 		return $this->default;
 	}
-	
+
 	/**
 	 * Atomic method to increment a value by the specified amount.
 	 */
@@ -216,10 +210,10 @@ abstract class MongoCollectionPlus extends MongoCollection
 		$this->update(array('_id'=>$this->schemaValues['_id']),
 					  array('$inc'=>array($field=>$amount))
 				  );
-		// update internal data. 
+		// update internal data.
 		$this->schemaValues[$field] +=  $amount;
 	}
-	
+
 	/**
 	 * Atomic method to decrement a value by the specified amount.
 	 */
@@ -229,11 +223,11 @@ abstract class MongoCollectionPlus extends MongoCollection
 		$this->update(array('_id'=>$this->schemaValues['_id']),
 					  array('$inc'=>array($field=>$amount))
 				  );
-		// update internal data. 
+		// update internal data.
 		$this->schemaValues[$field] +=  $amount;
 	}
-	
-	
+
+
 	/**
 	 * Inserts a new entry.
 	 * @return mixed Returns insert id on a successful insert, false on a failure due to failed custom validation or an unkown insertion error.
@@ -424,6 +418,7 @@ abstract class MongoCollectionPlus extends MongoCollection
 	/**
 	 * Runs the custom code listeners in the 'onFieldChange' var.
 	 * @param string $field The field that changed
+	 * @todo - should probably provide the field name too. This needs work, don't document yet.
 	 */
 	private function onFieldChange($field)
 	{
@@ -790,6 +785,7 @@ abstract class MongoCollectionPlus extends MongoCollection
 	 * @param array $sort The sort array
 	 * @param int $limit
 	 * @param bool $returnMatches True if a list of matching fields should be added to each item
+	 * @todo document this.
 	 */
 	public function relevancySearch($search, $sort = null, $limit = null, $returnMatches = false)
 	{
@@ -965,16 +961,16 @@ abstract class MongoCollectionPlus extends MongoCollection
 			return 0;
 		}
 	}
-	
+
 	/** helper cast functions - can be used with the setField array to ensure a particular data type */
 
 	/**
 	 * Casts input as a boolean - takes into account strings 'true' and 'false'
-	 * 
+	 *
 	 * @param mixed $value value to cast
-	 * 
+	 *
 	 * @return bool    true/false
-	 */	
+	 */
 	public function castBool($value)
     {
         if (is_bool($value))
@@ -991,12 +987,12 @@ abstract class MongoCollectionPlus extends MongoCollection
         }
         return (boolean)$value;
     }
-	
+
 	/**
-	 * Casts as MongoId object. If it's not a string or Object type MongoId, it'll return null. 
-	 * 
-	 * @param mixed $value Value to cast. 
-	 * 
+	 * Casts as MongoId object. If it's not a string or Object type MongoId, it'll return null.
+	 *
+	 * @param mixed $value Value to cast.
+	 *
 	 * @return Object    Type: MongoId
 	 */
 	public function castMongoId($value)

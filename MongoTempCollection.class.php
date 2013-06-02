@@ -22,9 +22,9 @@ class MongoTempCollection extends MongoCollectionPlus
 	 * 
 	 * @return null    
 	 */
-	function __construct($site, $exists = null)
+	function __construct($db, $exists = null)
 	{
-		$this->site = $site;
+		$this->db = $db;
 		if ($exists === null)
 		{
 			$this->collectionName = uniqid('temp_', true);
@@ -45,7 +45,7 @@ class MongoTempCollection extends MongoCollectionPlus
 			self::$TempCollections[$this->collectionName]++;
 		}
 
-		parent::__construct( $this->site);
+		parent::__construct( $this->db);
 	}
 	
 	/**
@@ -76,88 +76,5 @@ class MongoTempCollection extends MongoCollectionPlus
 	public function findObjects($query)
 	{
 		return new MongoCursorPlus($this->site, get_class($this), $this->dbName.'.'.$this->collectionName, $query);
-	}
-	
-	/**
-	 * Imports rows of a spreadsheet into the temp collection.
-	 * Header names are lower case!
-	 * THIS REQUIRES INSTALLATION OF PHPEXCEL LIBRARY.
-	 * @todo should maybe put this somewhere else so that this can be standalone. 
-	**/
-	public function loadSpreadsheet( $filename )
-	{
-		if( $objPHPExcel = PHPExcel_IOFactory::load($filename))
-		{
-			$objWorksheet = $objPHPExcel->getActiveSheet();
-			$rows = $objWorksheet->getRowIterator();
-			$data = array();
-			$columns = array(); // store x location and column name
-			$findHeader = true;
-			
-			// convert file to assoc array...
-			foreach($rows as $y => $row)
-			{
-				$cells = $row->getCellIterator();
-				$cells->setIterateOnlyExistingCells(false); // we want empty values too, so we can track relative locations
-				foreach($cells as $x => $cell)
-				{
-					// find columns...
-					if($findHeader)
-					{
-						$col = trim(strtolower($cell->getValue()));// trim whitespace, lower case for simplicty below
-						if($col !== '') // don't get empty cols...
-						{
-							$columns[$x] = str_replace( ".", "", $col);
-						}
-					}
-					else // load data...
-					{
-						if($columns[$x] === 'gam id')
-						{
-							$data[$y]['gam id'] = (int)trim($cell->getValue());
-							$this->set('gam id', (int)trim($cell->getValue()));
-						}
-						elseif( false !== strpos( $columns[$x], 'date' ) ) // date
-						{
-							$date = $cell->getValue(); // 37231 (Excel date)
-							$date = PHPExcel_Shared_Date::ExcelToPHP($date); // 1007596800 (Unix time)
-							$date = date('m/d/Y', $date); // PHP formatted date
-							$this->set($columns[$x], $date);
-						}
-						else // user group
-						{							
-							if(isset($data[$y][$columns[$x]]) === false)
-							{
-								$data[$y][$columns[$x]] = array();
-								$this->set($columns[$x], array());
-							}
-							$d = trim($cell->getValue());
-							if($d !== '')
-							{
-								$data[$y][$columns[$x]][] = $d;
-								$this->set($columns[$x], $d);
-							}
-							else
-							{
-								$this->set($columns[$x], '');
-							}
-						}
-					}
-				}
-				
-				if( !$findHeader )
-				{
-					$this->insert();
-					$this->unload();
-					unset($data);
-					$data = array();
-				}
-				$findHeader = false; // first row should have header...
-			}
-		}
-		else
-		{
-			return false;
-		}
 	}
 }
