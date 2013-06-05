@@ -15,9 +15,9 @@ Features
 - Mongo collections with default structure and values.
 - Operate on a document objectively with setters and getters.
 - load/insert/update/delete pre and post events to attach methods to, so that you can make your object functionaly smarter.
-- per-property setter and getter events, for operating on particular properties, casting, modification, logging, etc..
+- per-property setter and getter events, for operating on particular properties, casting, modification, logging, etc.
 - findObjects() method that operates just like MongoCollection::find(), but returns instances of MongoCollectionPlus instead of associative arrays. This utilizes MongoCursor, so it's memory efficient.
--
+
 
 
 Tutorial
