@@ -4,18 +4,19 @@
  *
  */
 /**
- * Idea Based on some code for MySQL by Eddie Daniels  <stratease@gmail.com>
+ * Based on mysql code by Eddie Daniels  <stratease@gmail.com>
  * @author Micah Stevens <micahstev@gmail.com>
+ * @version 1.1 added more helper functions
  * @version 2.0 - extends mongo collection
- * @version 1.0 - didn't extend mongoCollection - just was a factory for it, didn't work well.
+ * @version 1.0 - didn't extend mongoCollection
  * @todo Add foreign key mapping for app joins-maybe mongodbref?
  * @todo add some helper methods for caching?
+ * @todo add list class to deal with iteration
  *
- * @package MongoPlusPHP
+ * @package Core
  */
-
-require(dirname(__FILE__).DIRECTORY_SEPARATOR."MongoCursorPlus.class.php");
-abstract class MongoCollectionPlus extends MongoCollection
+require(dirname(__FILE__).DIRECTORY_SEPARATOR."MongoGridFSCursorPlus.class.php");
+abstract class MongoGridFSCollectionPlus extends MongoGridFS
 {
 	/**
 	 * Various extended data for this instance
@@ -77,6 +78,7 @@ abstract class MongoCollectionPlus extends MongoCollection
 	/**
 	 * Field on change event subscribers.
 	 * @var array
+	 * @todo - not implimented yet.
 	 */
 	protected $onFieldChange = array();
 	/**
@@ -138,36 +140,46 @@ abstract class MongoCollectionPlus extends MongoCollection
 	 */
 	protected $documentValues = array();
 	/**
-	 * MongoDB class
+	 * Site class
 	 */
-	protected $db;
+	protected $site;
 	/**
 	 * True if this should be a gridFS collection
-	 * @todo
 	 */
 	protected $gridFS = false;
-
 	/**
 	 * binary/text data for gridFS file. Required. set to '' if you want an empty file.
 	 */
 	public $fileData = null;
-
 	/**
 	 * Child class name
 	 */
 	public $__CLASS__;
-
-	function __construct($db)
+	function __construct($site, $collectionOverride = null)
 	{
 		$this->__CLASS__ = get_class($this);
+		$this->site = $site;
+		$dbServer = $site->db;
+		if ($this->dbName == null) {
+			// user didn't set dbName, so pull default from config
+			$this->dbName = $site->config->db->database;
+		}
+
+		if ($this->dbName === null) {
+			trigger_error(get_class($this) . "::__construct error - no DB specified", E_USER_ERROR);
+		}
 		// do startup activities
 		foreach ($this->onStart as $func) {
 			$this->$func();
 		}
+		if ($collectionOverride !== null)
+		{
+			$this->collectionName = $collectionOverride;
+		}
 		// Initialise Mongo
-		$this->db = $db;
-		$this->dbName = $db->__toString();
+		$this->db = $dbServer->selectDB($this->dbName);
 		parent::__construct($this->db, $this->collectionName);
+
 	}
 	/**
 	 * onLoad event.
@@ -221,7 +233,7 @@ abstract class MongoCollectionPlus extends MongoCollection
 	{
 		$amount = $amount * -1;
 		$this->update(array('_id'=>$this->schemaValues['_id']),
-					  array('$inc'=>array($field=>$amount))
+					  array('$dec'=>array($field=>$amount))
 				  );
 		// update internal data.
 		$this->schemaValues[$field] +=  $amount;
@@ -234,29 +246,12 @@ abstract class MongoCollectionPlus extends MongoCollection
 	 * @todo Do we need safe/fsync? Maybe have a class setting.
 	 * @todo make this work better with filenames/gridfs, rather than using php ram for file xfer.
 	 */
-	public function insert($data=null, $options = array())
+	public function insert($data=null, $bytes, $options = array())
 	{
-		if ($data !== null)
-		{
-			return parent::insert($data, $options);
-		}
-		if($this->validateInsert() === false)
-		{
-			return false;
-		}
-		$this->createDefaults();
-		$this->onBeforeInsert();
-		$result = parent::insert($this->schemaValues,array('safe'=> true));
-
-		if(isset($result['upserted']))
-		{
-			$this->schemaValues['_id'] = $result['upserted'];
-		}
-		$this->isLoaded = true;
-		$this->onAfterInsert();
-		return true;
+		$this->storeBytes($bytes, $data, $options);
 	}
-
+	
+	
 	/**
 	 * Hook to put insert validations
 	 *@return true if insert is allowed, false if denied
@@ -385,6 +380,7 @@ abstract class MongoCollectionPlus extends MongoCollection
 		$this->onAfterRemove();
 		// clean current instance.
 		$this->schemaValues = array();
+		$this->file = null;
 		$this->isLoaded = false;
 		return $return;
 	}
@@ -398,7 +394,7 @@ abstract class MongoCollectionPlus extends MongoCollection
 		}
 	}
 	/**
-	 * Sets all the properties
+	 * Sets all the properties - expects a GridFSFile object!! 
 	 * @param array $set Associative array of fields => values
 	 * @param bool $overWrite Will overwrite any registered data for this particular instance, true to merge instead with existing taking precidence.
 	 * @return bool Returns true for a successful load, false if nothing was loaded
@@ -407,18 +403,18 @@ abstract class MongoCollectionPlus extends MongoCollection
 	{
 		$this->isLoaded = true;
 		if ($overWrite) {
-			$this->schemaValues = $set;
+			$this->schemaValues = $set->file;
 		} else {
 			// merge with anything that already exists.
-			$this->schemaValues = $this->valueMerge($set, $this->schemaValues);
+			$this->schemaValues = $this->valueMerge($set->file, $this->schemaValues);
 		}
+		$this->file = $set;
 		$this->onLoad();
 	}
 
 	/**
 	 * Runs the custom code listeners in the 'onFieldChange' var.
 	 * @param string $field The field that changed
-	 * @todo - should probably provide the field name too. This needs work, don't document yet.
 	 */
 	private function onFieldChange($field)
 	{
@@ -449,10 +445,7 @@ abstract class MongoCollectionPlus extends MongoCollection
 	 * @param mixed $query A mongo query array, or a string/MongoId if you just want to grab by PK.
 	 * @param array $fields use this to select a subset of data.
 	 * @return boolean    True if successful
-	 * @todo - probably need to deal with primary keys here better.
-	 * @todo Should this set defaults, or just on save?
-	 * @todo gridFS implimentation not optimized for large files since it loads entirely into RAM,
-	 * maybe move to getter, or use as a file resource (best);
+	 * 
 	 */
 	public function findOne($query = array(), $fields = array())
 	{
@@ -483,7 +476,8 @@ abstract class MongoCollectionPlus extends MongoCollection
 		}
 
 		if ($document !== null) {
-			$this->schemaValues = $document;
+			$this->schemaValues = $document->file;
+			$this->file = $document;
 			// @todo should we provide a pointer to the binary data now?
 			$this->isLoaded = true;
 			$this->onLoad();
@@ -503,8 +497,7 @@ abstract class MongoCollectionPlus extends MongoCollection
 
 	/**
 	 * pretty much the same as the mongo find method at this point.
-	 * @todo would be nice if mongo cursor would return instances of this class. not sure it's possible.
-	 * @todo maybe make a 'findObjects' method or something that returns a list of instances of this class.
+	 * 
 	 * @return mongoCursor    mongo cursor returned
 	 */
 	public function find()
@@ -533,10 +526,11 @@ abstract class MongoCollectionPlus extends MongoCollection
 	 * @param array $filter filter
 	 *
 	 * @return object    MongoCursorPlus object.
+	 * @todo This doesn't seem to work with gridfs cursor? Not getting any results. :P 
 	 */
 	public function findObjects($query=[])
 	{
-		return new MongoCursorPlus($this->site, get_class($this), $this->dbName.'.'.$this->collectionName, $query);
+		return new MongoGridFSCursorPlus($this->site, $this, get_class($this), $this->dbName.'.'.$this->collectionName, $query);
 	}
 
 	/**
@@ -547,6 +541,7 @@ abstract class MongoCollectionPlus extends MongoCollection
 	public function unLoad()
 	{
 		$this->schemaValues = array();
+		$this->file = null;
 		$this->isLoaded = false;
 		return true;
 	}
@@ -662,6 +657,8 @@ abstract class MongoCollectionPlus extends MongoCollection
 		}
 		return $context;
 	}
+	
+	
 	/**
 	 * property getter
 	 *
@@ -753,6 +750,34 @@ abstract class MongoCollectionPlus extends MongoCollection
 		return $this->schemaValues;
 	}
 	/**
+	 * takes provided array and strips all variables that don't match those defined as default for
+	 * this object. Helpful way to filter POST variables, etc. Just returns the filtered value.
+	 *
+	 * @todo doesn't filter by type. That could be helpful too?
+	 * @param mixed value to filter
+	 * @return filtered value
+	 */
+	public function filterByDefault($values)
+	{
+		$out = [];
+		foreach ($this->default as $key=>$value) {
+			if (isset($values[$key])) {
+				$out[$key] = $values[$key];
+			}
+		}
+		return $out;
+	}
+
+	/**
+	 * takes a structure and filters out any data that normally we wouldn't want to update.
+	 * Extend this if you want, normally we just dump the _id.
+	 */
+	public function filterSensitive($data)
+	{
+		unset($data['_id']);
+		return $data;
+	}
+	/**
 	 * Merges any number of arrays / parameters recursively, replacing
 	 * entries with string keys with values from latter arrays.
 	 * If the entry or the next value to be assigned is an array, then it
@@ -801,7 +826,6 @@ abstract class MongoCollectionPlus extends MongoCollection
 	 * @param array $sort The sort array
 	 * @param int $limit
 	 * @param bool $returnMatches True if a list of matching fields should be added to each item
-	 * @todo document this.
 	 */
 	public function relevancySearch($search, $sort = null, $limit = null, $returnMatches = false)
 	{
@@ -980,13 +1004,6 @@ abstract class MongoCollectionPlus extends MongoCollection
 
 	/** helper cast functions - can be used with the setField array to ensure a particular data type */
 
-	/**
-	 * Casts input as a boolean - takes into account strings 'true' and 'false'
-	 *
-	 * @param mixed $value value to cast
-	 *
-	 * @return bool    true/false
-	 */
 	public function castBool($value)
     {
         if (is_bool($value))
@@ -1004,13 +1021,6 @@ abstract class MongoCollectionPlus extends MongoCollection
         return (boolean)$value;
     }
 
-	/**
-	 * Casts as MongoId object. If it's not a string or Object type MongoId, it'll return null.
-	 *
-	 * @param mixed $value Value to cast.
-	 *
-	 * @return Object    Type: MongoId
-	 */
 	public function castMongoId($value)
 	{
 		if (is_string($value) && $this->checkId($value))
@@ -1043,4 +1053,148 @@ abstract class MongoCollectionPlus extends MongoCollection
 		}
 		return true;
 	}
+	
+	/**** GRID FS COMPATIBILITY METHODS ****/
+	/**
+	 * Equiv of MongoGridFS::get() - necessary due to naming conflict with our get() method.
+	 */
+	public function getById($id)
+	{
+		$file = parent::get($id);
+		if ($file)
+		{
+			$this->schemaValues = $file->file;
+			$this->file = $file;
+		}
+	}
+	
+	/**
+	 * Provides getBytes() compatibility.
+	 */
+	public function getBytes()
+	{
+		if ($this->isLoaded)
+		{
+			return $this->file->getBytes();
+		}
+		return null;
+	}
+	
+	/**
+	 * Provides getBytes() compatibility.
+	 */
+	public function getFilename()
+	{
+		if ($this->isLoaded)
+		{
+			return $this->file->getFilename();
+		}
+		return null;
+	}
+	
+	/**
+	 * Provides getResource() compatibility.
+	 */
+	public function getResource()
+	{
+		if ($this->isLoaded)
+		{
+			return $this->file->getResource();
+		}
+		return null;
+	}
+	
+	/**
+	 * Provides getBytes() compatibility.
+	 */
+	public function getSize()
+	{
+		if ($this->isLoaded)
+		{
+			return $this->file->getSize();
+		}
+		return null;
+	}
+	
+	/**
+	 * Provides write() compatibility.
+	 */
+	public function write()
+	{
+		if ($this->isLoaded)
+		{
+			return $this->file->write();
+		}
+		return null;
+	}
+	/** 
+	 * storeBytes compatibility
+	 */
+	public function storeBytes($bytes, $metadata = null, $options = array())
+	{
+		if ($metadata !== null) 
+		{
+			// call parent
+			return parent::storeBytes($bytes, $metadata, $options);
+		}
+		if($this->validateInsert() === false)
+		{
+			return false;
+		}
+		$this->createDefaults();
+		$this->onBeforeInsert();
+		$id = parent::storeBytes($bytes, $this->schemaValues);
+		$this->schemaValues['_id'] = $id;
+		$this->isLoaded = true;
+		$this->onAfterInsert();
+		return true;
+	}
+	
+	/** 
+	 * storeFile compatibility
+	 */
+	public function storeFile($filename, $metadata = null, $options = array())
+	{
+		if ($metadata !== null) 
+		{
+			// call parent
+			return parent::storeBytes($filename, $metadata, $options);
+		}
+		if($this->validateInsert() === false)
+		{
+			return false;
+		}
+		$this->createDefaults();
+		$this->onBeforeInsert();
+		$id = parent::storeFile($filename, $this->schemaValues);
+		$this->schemaValues['_id'] = $id;
+		$this->isLoaded = true;
+		$this->onAfterInsert();
+		return true;
+	}
+	
+	/** 
+	 * storeUpload compatibility
+	 */
+	public function storeUpload($name, $metadata = null, $options = array())
+	{
+		if ($metadata !== null) 
+		{
+			// call parent
+			return parent::storeUpload($name, $metadata, $options);
+		}
+		if($this->validateInsert() === false)
+		{
+			return false;
+		}
+		$this->createDefaults();
+		$this->onBeforeInsert();
+		$id = parent::storeUpload($name, $this->schemaValues);
+		$this->schemaValues['_id'] = $id;
+		$this->isLoaded = true;
+		$this->onAfterInsert();
+		return true;
+	}
+
+	
 }
