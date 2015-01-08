@@ -993,14 +993,19 @@ abstract class MongoCollectionPlus extends MongoCollection
         {
             return $value;
         }
-        if (strtolower($value) == 'true')
-        {
-            return true;
-        }
-        if (strtolower($value) == 'false')
-        {
-            return false;
-        }
+		$trues = array('true', 'yes', '1');
+		$falses = array('false', 'no', '0');
+		if (is_string($value))
+		{
+			if (in_array(strtolower($value), $trues))
+			{
+				return true;
+			}
+			if (in_array(strtolower($value), $falses))
+			{
+				return false;
+			}
+		}
         return (boolean)$value;
     }
 
